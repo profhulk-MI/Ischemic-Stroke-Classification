@@ -1,0 +1,138 @@
+def reliability_diagram(y_true, y_prob, n_bins=10, save_path=None, title="Reliability Diagram"):
+
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+    bin_ids = np.digitize(y_prob, bins) - 1
+
+    bin_true, bin_pred, bin_counts = [], [], []
+
+    for i in range(n_bins):
+        idx = bin_ids == i
+        if np.sum(idx) > 0:
+            bin_true.append(np.mean(y_true[idx]))
+            bin_pred.append(np.mean(y_prob[idx]))
+            bin_counts.append(np.sum(idx))
+        else:
+            bin_true.append(0)
+            bin_pred.append((bins[i] + bins[i+1]) / 2)
+            bin_counts.append(0)
+
+    ece = sum((bin_counts[i] / len(y_true)) * abs(bin_true[i] - bin_pred[i])
+              for i in range(n_bins))
+
+    mce = np.max(np.abs(np.array(bin_true) - np.array(bin_pred)))
+
+    brier = brier_score_loss(y_true, y_prob)
+
+    plt.figure(figsize=(6, 6))
+    plt.plot([0, 1], [0, 1], "k--", label="Perfect calibration")
+    plt.plot(bin_pred, bin_true, marker="o", label="Model")
+    plt.xlabel("Confidence")
+    plt.ylabel("Accuracy")
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return ece, mce, brier
+
+
+# ===================== RISK–COVERAGE + AURC =====================
+
+def risk_coverage_curve(entropy, y_true, y_pred, save_path=None):
+
+    idx = np.argsort(entropy)
+
+    y_true = y_true[idx]
+    y_pred = y_pred[idx]
+
+    risks, coverages = [], []
+    N = len(y_true)
+
+    for k in range(1, N+1):
+        acc = np.mean(y_true[:k] == y_pred[:k])
+        risks.append(1 - acc)
+        coverages.append(k / N)
+
+    risks = np.array(risks)
+    coverages = np.array(coverages)
+
+    aurc = np.trapz(risks, coverages)
+
+    plt.figure(figsize=(7, 6))
+    plt.plot(coverages, risks)
+    plt.xlabel("Coverage")
+    plt.ylabel("Risk (1 − accuracy)")
+    plt.title("Risk–Coverage Curve (Entropy rejection)")
+    plt.grid(True)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return aurc
+
+
+# ===================== MAIN =====================
+
+def main():
+
+    transform = transforms.Compose([
+        transforms.Resize(230),
+        transforms.CenterCrop(224),
+        transforms.ToTensor()
+    ])
+
+    test_dataset = datasets.ImageFolder("dataset/test", transform=transform)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+    model = CustomCNNWithDropout(num_classes=2)
+    model.load_state_dict(torch.load("model_fold_5.pth", map_location="cpu", weights_only=True))
+    model.eval()
+
+    all_probs = []
+    all_true = []
+    all_pred = []
+    all_entropy = []
+
+    with torch.no_grad():
+        for x, y in test_loader:
+            logits = model(x)
+            probs = torch.softmax(logits, dim=1).numpy()[0]
+
+            pred = np.argmax(probs)
+            entropy = -np.sum(probs * np.log(probs + 1e-8))
+
+            all_probs.append(probs[1])  # positive class probability
+            all_true.append(y.item())
+            all_pred.append(pred)
+            all_entropy.append(entropy)
+
+    all_probs = np.array(all_probs)
+    all_true = np.array(all_true)
+    all_pred = np.array(all_pred)
+    all_entropy = np.array(all_entropy)
+
+    # reliability
+    ece, mce, brier = reliability_diagram(
+        all_true,
+        all_probs,
+        save_path="baseline_reliability.png",
+        title="Reliability Diagram"
+    )
+
+    print(f"ECE = {ece:.4f}")
+    print(f"MCE = {mce:.4f}")
+    print(f"Brier score = {brier:.4f}")
+
+    # risk–coverage + AURC
+    aurc = risk_coverage_curve(
+        entropy=all_entropy,
+        y_true=all_true,
+        y_pred=all_pred,
+        save_path="risk_coverage_entropy.png"
+    )
+
+    print(f"AURC = {aurc:.4f}")
