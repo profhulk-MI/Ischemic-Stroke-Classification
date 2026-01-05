@@ -1,0 +1,401 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
+from scipy.stats import mode,spearmanr,pearsonr
+from tqdm import tqdm
+import pandas as pd
+from pytorch_grad_cam import GradCAM, GradCAMPlusPlus, ScoreCAM
+from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+from pytorch_grad_cam.utils.image import show_cam_on_image
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+import os
+import cv2
+
+def save_cam_images_color(cam_maps, image_index, pass_index, cam_type, output_folder):
+    """
+    Save CAM images with a color map.
+
+    Args:
+        cam_maps: Dictionary containing CAM maps (e.g., GradCAM, GradCAM++, ScoreCAM).
+        image_index: Index of the image being processed.
+        pass_index: Index of the MC Dropout pass.
+        cam_type: Type of CAM (e.g., "GradCAM", "GradCAM++", "ScoreCAM").
+        output_folder: Root folder where CAM images will be saved.
+    """
+    # Create folder structure
+    image_folder = os.path.join(output_folder, f"image_{image_index}")
+    cam_folder = os.path.join(image_folder, cam_type)
+    os.makedirs(cam_folder, exist_ok=True)
+
+    # Save each CAM map as a color image
+    for name, cam_map in cam_maps.items():
+        cam_path = os.path.join(cam_folder, f"{name}_pass_{pass_index}.png")
+        
+        # Normalize CAM values to [0, 255]
+        normalized_cam = (cam_map - np.min(cam_map)) / (np.max(cam_map) - np.min(cam_map) + 1e-8)
+        grayscale_cam = (normalized_cam * 255).astype(np.uint8)
+        
+        # Apply a vibrant color map (e.g., COLORMAP_JET)
+        color_cam = cv2.applyColorMap(grayscale_cam, cv2.COLORMAP_JET)
+        
+        # Save the colored CAM image
+        cv2.imwrite(cam_path, color_cam)
+
+class CustomCNNWithDropout(nn.Module):
+    def __init__(self, num_classes=2, input_channels=3, dropout_rate=0.01):
+        super(CustomCNNWithDropout, self).__init__()
+        channels = 128
+        self.dropout_rate = dropout_rate
+
+        self.conv1 = nn.Conv2d(input_channels, channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.skip1 = nn.Conv2d(input_channels, channels, kernel_size=1)
+
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(channels)
+        self.skip2 = nn.Conv2d(channels, channels, kernel_size=1)
+
+        self.conv3 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(channels)
+        self.skip3 = nn.Conv2d(channels, channels, kernel_size=1)
+
+        self.conv4 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm2d(channels)
+        self.skip4 = nn.Conv2d(channels, channels, kernel_size=1)
+
+        self.conv5 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn5 = nn.BatchNorm2d(channels)
+        self.skip5 = nn.Conv2d(channels, channels, kernel_size=1)
+
+        self.drop1 = nn.Dropout(p=dropout_rate)
+        self.drop2 = nn.Dropout(p=dropout_rate)
+        self.drop3 = nn.Dropout(p=dropout_rate)
+        self.drop4 = nn.Dropout(p=dropout_rate)
+        self.drop5 = nn.Dropout(p=dropout_rate)
+        self.classifier_dropout = nn.Dropout(p=dropout_rate)
+
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(channels, num_classes)
+
+    def forward(self, x):
+        identity = self.skip1(x)
+        x = self.bn1(F.relu(self.conv1(x))) + identity
+        x = F.max_pool2d(x, 2)
+        x = self.drop1(x)
+
+        identity = self.skip2(x)
+        x = self.bn2(F.relu(self.conv2(x))) + identity
+        x = F.max_pool2d(x, 2)
+        x = self.drop2(x)
+
+        identity = self.skip3(x)
+        x = self.bn3(F.relu(self.conv3(x))) + identity
+        x = F.max_pool2d(x, 2)
+        x = self.drop3(x)
+
+        identity = self.skip4(x)
+        x = self.bn4(F.relu(self.conv4(x))) + identity
+        x = F.max_pool2d(x, 2)
+        x = self.drop4(x)
+
+        identity = self.skip5(x)
+        x = self.bn5(F.relu(self.conv5(x))) + identity
+        x = F.max_pool2d(x, 2)
+        x = self.drop5(x)
+
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier_dropout(x)
+        x = self.fc(x)
+        return x
+
+    def set_dropout_rate(self, rate):
+        self.drop1.p = rate
+        self.drop2.p = rate
+        self.drop3.p = rate
+        self.drop4.p = rate
+        self.drop5.p = rate
+        self.classifier_dropout.p = rate
+def generate_cam_maps(cam_methods, image_tensor, class_idx):
+    """
+    Generate GradCAM, GradCAM++, and ScoreCAM maps for a given image and target class.
+    """
+    cam_maps = {}
+    for name, cam_method in cam_methods.items():
+        # Generate CAM map for the target class
+        grayscale_cam = cam_method(input_tensor=image_tensor, targets=[ClassifierOutputTarget(class_idx)])
+        cam_maps[name] = grayscale_cam[0]  # Extract first image from batch (since batch size = 1)
+    return cam_maps
+
+
+
+def compare_cams(cam_a, cam_b, correlation_type="pearson"):
+    """
+    Compare two CAM maps using Pearson or Spearman correlation coefficient.
+    
+    Args:
+        cam_a: First CAM map as a flattened array.
+        cam_b: Second CAM map as a flattened array.
+        correlation_type: Type of correlation ("pearson" or "spearman").
+        
+    Returns:
+        Correlation coefficient.
+    """
+    if correlation_type == "pearson":
+        return pearsonr(cam_a.flatten(), cam_b.flatten())[0]
+    elif correlation_type == "spearman":
+        return spearmanr(cam_a.flatten(), cam_b.flatten())[0]
+    else:
+        raise ValueError("Invalid correlation_type. Use 'pearson' or 'spearman'.")
+
+def average_cam(cam_maps):
+    """
+    Compute the average intensity of a CAM map.
+    """
+    return {name: np.mean(cam) for name, cam in cam_maps.items()}
+# ------------------- Entropy Utils -------------------
+
+def compute_entropy(probabilities, eps=1e-8):
+    mean_probs = np.mean(probabilities, axis=0)
+    return -np.sum(mean_probs * np.log(mean_probs + eps))
+
+# ------------------- Metrics -------------------
+
+def binary_specificity(y_true, y_pred):
+    cm = confusion_matrix(y_true, y_pred)
+    tn = cm[0, 0]
+    fp = cm[0, 1]
+    return tn / (tn + fp + 1e-6)
+
+# ------------------- MC Dropout Prediction -------------------
+
+def mc_dropout_predictions(model, image, T=20):
+    model.eval()  # Keep BatchNorm in eval
+
+    def enable_dropout(m):
+        if isinstance(m, nn.Dropout):
+            m.train()
+        elif isinstance(m, nn.BatchNorm2d):
+            m.eval()
+    model.apply(enable_dropout)
+
+    preds = []
+    softmax_probs = []
+
+    with torch.no_grad():
+        for _ in range(T):
+            output = model(image.unsqueeze(0))  # (1, num_classes)
+            probs = F.softmax(output, dim=1).squeeze(0).cpu().numpy()
+            pred = np.argmax(probs)
+            preds.append(pred)
+            softmax_probs.append(probs)
+
+    return np.array(preds), np.stack(softmax_probs)
+
+# ------------------- Evaluation -------------------
+
+def evaluate_with_uncertainty_and_cam(
+    model,
+    baseline_model,
+    dataloader,
+    threshold=0.5,
+    T=20,
+    device="cpu",
+    csv_path_avg="mc_dropout_results_with_cam_avg.csv",
+    csv_path_min="mc_dropout_results_with_cam_min.csv",
+    output_folder="cam_images"
+):
+    """
+    Evaluate model with uncertainty and CAMs. Compare dropout CAMs with baseline CAMs.
+    Save results with average CAM values and minimum CAM values.
+    Also save every CAM image in a structured folder hierarchy.
+    
+    Args:
+        model: Model with MC Dropout enabled.
+        baseline_model: Baseline model without dropout for comparison.
+        dataloader: DataLoader for test dataset.
+        threshold: Entropy threshold for filtering predictions.
+        T: Number of MC Dropout passes.
+        device: Device for computation ("cpu" or "cuda").
+        csv_path_avg: Path to save CSV with average CAM values.
+        csv_path_min: Path to save CSV with minimum CAM values.
+        output_folder: Root folder to save CAM images.
+    """
+    y_true_all = []
+    y_pred_all = []
+    rows_avg = []
+    rows_min = []
+
+    model.to(device)
+    baseline_model.to(device)
+
+    dropout_cam_methods = {
+        "GradCAM": GradCAM(model=model, target_layers=[model.conv5]),
+        "GradCAM++": GradCAMPlusPlus(model=model, target_layers=[model.conv5]),
+        "ScoreCAM": ScoreCAM(model=model, target_layers=[model.conv5]),
+    }
+    
+    baseline_cam_methods = {
+        "GradCAM": GradCAM(model=baseline_model, target_layers=[baseline_model.conv5]),
+        "GradCAM++": GradCAMPlusPlus(model=baseline_model, target_layers=[baseline_model.conv5]),
+        "ScoreCAM": ScoreCAM(model=baseline_model, target_layers=[baseline_model.conv5]),
+    }
+
+    for idx, (images, labels) in enumerate(tqdm(dataloader, desc="Evaluating")):
+        for i in range(images.size(0)):
+            image = images[i].to(device)
+            true_label = labels[i].item()
+
+            # MC Dropout Predictions
+            preds, probs = mc_dropout_predictions(model, image, T=T)
+            majority_label = mode(preds).mode.item()
+            ent = compute_entropy(probs)
+            selected = int(ent <= threshold)
+
+            # Generate and save dropout CAM maps for each pass
+            dropout_cams_all_passes = {name: [] for name in dropout_cam_methods.keys()}
+            for t in range(T):
+                single_pass_cams = generate_cam_maps(
+                    cam_methods=dropout_cam_methods,
+                    image_tensor=image.unsqueeze(0),
+                    class_idx=majority_label
+                )
+                for name in single_pass_cams.keys():
+                    dropout_cams_all_passes[name].append(single_pass_cams[name])
+                
+                # Save individual pass CAM images
+                save_cam_images_color(single_pass_cams, idx, t + 1, "dropout", output_folder)
+
+            averaged_dropout_cams = {name: np.mean(dropout_cams_all_passes[name], axis=0) for name in dropout_cams_all_passes.keys()}
+            minimum_dropout_cams = {name: np.min(dropout_cams_all_passes[name], axis=0) for name in dropout_cams_all_passes.keys()}
+
+            # Generate and save baseline CAM maps
+            baseline_cams = generate_cam_maps(
+                cam_methods=baseline_cam_methods,
+                image_tensor=image.unsqueeze(0),
+                class_idx=majority_label
+            )
+            save_cam_images_color(baseline_cams, idx, 0, "baseline", output_folder)
+
+            cam_correlations_pearson = {name: compare_cams(averaged_dropout_cams[name], baseline_cams[name], correlation_type="pearson") for name in averaged_dropout_cams.keys()}
+            cam_correlations_spearman = {name: compare_cams(averaged_dropout_cams[name], baseline_cams[name], correlation_type="spearman") for name in averaged_dropout_cams.keys()}
+
+            # Save results with average CAM values
+            rows_avg.append({
+                "Image_Index": idx,
+                "True_Label": true_label,
+                "Pred_Label": majority_label,
+                "Entropy": ent,
+                "Selected": selected,
+                "Avg_GradCAM_Intensity": average_cam(averaged_dropout_cams)["GradCAM"],
+                "Avg_GradCAM++_Intensity": average_cam(averaged_dropout_cams)["GradCAM++"],
+                "Avg_ScoreCAM_Intensity": average_cam(averaged_dropout_cams)["ScoreCAM"],
+                "Pearson_GradCAM_Correlation": cam_correlations_pearson["GradCAM"],
+                "Pearson_GradCAM++_Correlation": cam_correlations_pearson["GradCAM++"],
+                "Pearson_ScoreCAM_Correlation": cam_correlations_pearson["ScoreCAM"],
+                "Spearman_GradCAM_Correlation": cam_correlations_spearman["GradCAM"],
+                "Spearman_GradCAM++_Correlation": cam_correlations_spearman["GradCAM++"],
+                "Spearman_ScoreCAM_Correlation": cam_correlations_spearman["ScoreCAM"],
+                "Image_Path": f"{output_folder}/image_{idx}"  # Add path to saved images
+            })
+
+            # Save results with minimum CAM values
+            rows_min.append({
+                "Image_Index": idx,
+                "True_Label": true_label,
+                "Pred_Label": majority_label,
+                "Entropy": ent,
+                "Selected": selected,
+                "Min_GradCAM_Intensity": np.min(minimum_dropout_cams["GradCAM"]),
+                "Min_GradCAM++_Intensity": np.min(minimum_dropout_cams["GradCAM++"]),
+                "Min_ScoreCAM_Intensity": np.min(minimum_dropout_cams["ScoreCAM"]),
+                "Pearson_GradCAM_Correlation": cam_correlations_pearson["GradCAM"],
+                "Pearson_GradCAM++_Correlation": cam_correlations_pearson["GradCAM++"],
+                "Pearson_ScoreCAM_Correlation": cam_correlations_pearson["ScoreCAM"],
+                "Spearman_GradCAM_Correlation": cam_correlations_spearman["GradCAM"],
+                "Spearman_GradCAM++_Correlation": cam_correlations_spearman["GradCAM++"],
+                "Spearman_ScoreCAM_Correlation": cam_correlations_spearman["ScoreCAM"],
+                "Image_Path": f"{output_folder}/image_{idx}"  # Add path to saved images
+            })
+
+            if selected:
+                y_true_all.append(true_label)
+                y_pred_all.append(majority_label)
+
+    # Save CSV files
+    df_avg = pd.DataFrame(rows_avg)
+    df_avg.to_csv(csv_path_avg, index=False)
+    
+    df_min = pd.DataFrame(rows_min)
+    df_min.to_csv(csv_path_min, index=False)
+
+    print(f"📁 Saved average results to {csv_path_avg}")
+    print(f"📁 Saved minimum results to {csv_path_min}")
+
+    acc = accuracy_score(y_true_all, y_pred_all)
+    prec = precision_score(y_true_all, y_pred_all)
+    rec = recall_score(y_true_all, y_pred_all)
+    f1 = f1_score(y_true_all, y_pred_all)
+    spec = binary_specificity(y_true_all, y_pred_all)
+    cm = confusion_matrix(y_true_all, y_pred_all)
+
+    return {
+        "Confusion Matrix": cm,
+        "Accuracy": acc,
+        "Precision": prec,
+        "Recall": rec,
+        "Specificity": spec,
+        "F1 Score": f1,
+        "Samples Considered": len(y_true_all),
+    }
+
+
+
+
+def main():
+    from torch.utils.data import DataLoader
+    from torchvision import datasets, transforms
+
+    # Define transforms and load test dataset
+    transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor() 
+    ])
+    test_dataset = datasets.ImageFolder('/kaggle/input/folds4/kaggle/working/fold4/test', transform=transform)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+    # Initialize model with dropout
+    model = CustomCNNWithDropout(num_classes=2, dropout_rate=0.01)  # Adjust num_classes and dropout rate as needed
+    model.load_state_dict(torch.load('/kaggle/input/mod/pytorch/default/1/model_fold_4.pth', map_location='cpu', weights_only=True))
+
+
+    # Initialize baseline model (without dropout for CAM comparison)
+    baseline_model = CustomCNNWithDropout(num_classes=2, dropout_rate=0)  # Disable dropout for baseline
+    baseline_model.load_state_dict(torch.load('/kaggle/input/mod/pytorch/default/1/model_fold_4.pth', map_location='cpu', weights_only=True))
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Evaluate with uncertainty and CAMs
+    metrics = evaluate_with_uncertainty_and_cam(
+        model=model,
+        baseline_model=baseline_model,
+        dataloader=test_loader,
+        threshold=0.5,
+        T=20,
+        device=device,
+        csv_path_avg="mc_dropout_results_with_cam_avg.csv",  # Save results with average CAM values
+        csv_path_min="mc_dropout_results_with_cam_min.csv",   # Save results with minimum CAM values
+        output_folder="cam_images"
+    )
+
+    print("\n📊 Evaluation Metrics (Entropy <= 0.5):")
+    for k, v in metrics.items():
+        print(f"{k}: {v}")
+
+if __name__ == '__main__':
+    main()
