@@ -1,0 +1,435 @@
+import matplotlib.pyplot as plt
+from sklearn.metrics import brier_score_loss
+
+
+def reliability_diagram(y_true, y_pred, n_bins=10, save_path=None, title="Reliability Diagram"):
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+    bin_ids = np.digitize(y_pred, bins) - 1
+
+    bin_true, bin_pred, bin_counts = [], [], []
+
+    for i in range(n_bins):
+        idx = bin_ids == i
+        if np.sum(idx) > 0:
+            bin_true.append(np.mean(y_true[idx]))
+            bin_pred.append(np.mean(y_pred[idx]))
+            bin_counts.append(np.sum(idx))
+        else:
+            bin_true.append(0)
+            bin_pred.append((bins[i] + bins[i+1]) / 2)
+            bin_counts.append(0)
+
+    # ---- ECE ----
+    ece = sum((bin_counts[i] / len(y_true)) * abs(bin_true[i] - bin_pred[i])
+              for i in range(n_bins))
+
+    # ---- MCE ----
+    mce = np.max(np.abs(np.array(bin_true) - np.array(bin_pred)))
+
+    # ---- Brier Score ----
+    bs = brier_score_loss(y_true, y_pred)
+
+    # ---- Plot ----
+    plt.figure(figsize=(6, 6))
+    plt.plot([0, 1], [0, 1], "k--", label="Perfect Calibration")
+    plt.plot(bin_pred, bin_true, marker="o", label="Model")
+    plt.xlabel("Predicted Probability")
+    plt.ylabel("True Accuracy")
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return ece, mce, bs
+# ===================== TEMPERATURE SCALING =====================
+class TemperatureScaler(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.temperature = nn.Parameter(torch.ones(1))
+
+    def forward(self, logits):
+        return logits / self.temperature
+
+
+def train_temperature(logits, labels, lr=0.001, epochs=500):
+    scaler = TemperatureScaler()
+    optimizer = torch.optim.Adam([scaler.temperature], lr=lr)
+
+    logits = torch.tensor(logits, dtype=torch.float32)
+    labels = torch.tensor(labels, dtype=torch.float32)
+
+    for _ in range(epochs):
+        optimizer.zero_grad()
+        scaled_logits = scaler(logits)
+        loss = F.binary_cross_entropy_with_logits(
+            scaled_logits.squeeze(), labels
+        )
+        loss.backward()
+        optimizer.step()
+
+    return scaler
+def collect_logits_and_probs(model, dataloader, device, mc_dropout=False, T=20):
+    model.to(device)
+    model.eval()
+
+    y_true, y_prob, logits_all = [], [], []
+
+    with torch.no_grad():
+        for images, labels in dataloader:
+            images = images.to(device)
+
+            if mc_dropout:
+                preds, probs = mc_dropout_predictions(model, images[0], T=T)
+                mean_probs = probs.mean(axis=0)
+                prob = mean_probs[1]
+                logit = np.log(prob / (1 - prob + 1e-8))
+            else:
+                output = model(images)
+                prob = torch.softmax(output, dim=1)[:, 1].cpu().numpy()[0]
+                logit = output[:, 1].cpu().numpy()[0]
+
+            y_true.append(labels.item())
+            y_prob.append(prob)
+            logits_all.append(logit)
+
+    return np.array(y_true), np.array(y_prob), np.array(logits_all)
+def run_calibration(model, dataloader, device, name, mc_dropout=False):
+    os.makedirs("calibration_results", exist_ok=True)
+
+    y_true, y_prob, logits = collect_logits_and_probs(
+        model, dataloader, device, mc_dropout=mc_dropout
+    )
+
+    # ----- BEFORE CALIBRATION -----
+    ece, mce, bs = reliability_diagram(
+        y_true, y_prob,
+        save_path=f"calibration_results/{name}_reliability.png",
+        title=f"{name} Reliability"
+    )
+
+    # ----- TEMPERATURE SCALING -----
+    scaler = train_temperature(logits, y_true)
+    scaled_logits = scaler(torch.tensor(logits)).detach().numpy()
+    y_prob_scaled = 1 / (1 + np.exp(-scaled_logits))
+
+    ece_t, mce_t, bs_t = reliability_diagram(
+        y_true, y_prob_scaled,
+        save_path=f"calibration_results/{name}_reliability_temp_scaled.png",
+        title=f"{name} Reliability (Temp Scaled)"
+    )
+
+    results = {
+        "Model": name,
+        "ECE": ece,
+        "MCE": mce,
+        "Brier": bs,
+        "ECE_Temp": ece_t,
+        "MCE_Temp": mce_t,
+        "Brier_Temp": bs_t,
+        "Temperature": scaler.temperature.item()
+    }
+    
+    # ---- SAVE TO CSV ----
+    csv_path = "calibration_results/calibration_metrics.csv"
+    
+    df = pd.DataFrame([results])
+    
+    if os.path.exists(csv_path):
+        df.to_csv(csv_path, mode="a", header=False, index=False)
+    else:
+        df.to_csv(csv_path, index=False)
+    
+    return results
+
+
+# ------------------- Evaluation -------------------
+
+def evaluate_with_uncertainty_and_cam(
+    model,
+    baseline_model,
+    dataloader,
+    dataset,
+    threshold=0.5,
+    T=20,
+    device="cpu",
+    csv_path_avg="mc_dropout_results_with_cam_avg.csv",
+    csv_path_min="mc_dropout_results_with_cam_min.csv",
+    output_folder="cam_images"
+):
+    """
+    Evaluate model with uncertainty and CAMs. Compare dropout CAMs with baseline CAMs.
+    Save results with average CAM values and minimum CAM values.
+    Also save every CAM image in a structured folder hierarchy.
+    
+    Args:
+        model: Model with MC Dropout enabled.
+        baseline_model: Baseline model without dropout for comparison.
+        dataloader: DataLoader for test dataset.
+        threshold: Entropy threshold for filtering predictions.
+        T: Number of MC Dropout passes.
+        device: Device for computation ("cpu" or "cuda").
+        csv_path_avg: Path to save CSV with average CAM values.
+        csv_path_min: Path to save CSV with minimum CAM values.
+        output_folder: Root folder to save CAM images.
+    """
+    y_true_all = []
+    y_pred_all = []
+    rows_avg = []
+    rows_min = []
+    all_entropies = []
+    all_true = []
+    all_pred = []
+
+    model.to(device)
+    baseline_model.to(device)
+
+    dropout_cam_methods = {
+        "GradCAM": GradCAM(model=model, target_layers=[model.conv5]),
+        "GradCAM++": GradCAMPlusPlus(model=model, target_layers=[model.conv5]),
+        "ScoreCAM": ScoreCAM(model=model, target_layers=[model.conv5]),
+    }
+    
+    baseline_cam_methods = {
+        "GradCAM": GradCAM(model=baseline_model, target_layers=[baseline_model.conv5]),
+        "GradCAM++": GradCAMPlusPlus(model=baseline_model, target_layers=[baseline_model.conv5]),
+        "ScoreCAM": ScoreCAM(model=baseline_model, target_layers=[baseline_model.conv5]),
+    }
+
+    for idx, (images, labels) in enumerate(tqdm(dataloader, desc="Evaluating")):
+        for i in range(images.size(0)):
+            image = images[i].to(device)
+            true_label = labels[i].item()
+            dataset_index = idx * dataloader.batch_size + i
+            original_image_path = save_original_image(
+                dataset=dataset,
+                image_index=dataset_index,
+                output_folder=output_folder
+            )
+            # MC Dropout Predictions
+            preds, probs = mc_dropout_predictions(model, image, T=T)
+            majority_label = mode(preds).mode.item()
+            ent = compute_entropy(probs)
+            selected = int(ent <= threshold)
+            all_entropies.append(ent)
+            all_true.append(true_label)
+            all_pred.append(majority_label)
+
+            # Generate and save dropout CAM maps for each pass
+            dropout_cams_all_passes = {name: [] for name in dropout_cam_methods.keys()}
+            for t in range(T):
+                single_pass_cams = generate_cam_maps(
+                    cam_methods=dropout_cam_methods,
+                    image_tensor=image.unsqueeze(0),
+                    class_idx=majority_label
+                )
+                for name in single_pass_cams.keys():
+                    dropout_cams_all_passes[name].append(single_pass_cams[name])
+                
+                # Save individual pass CAM images
+                #save_cam_images_color(single_pass_cams, dataset_index, t + 1, "dropout", output_folder)
+
+            averaged_dropout_cams = {name: np.mean(dropout_cams_all_passes[name], axis=0) for name in dropout_cams_all_passes.keys()}
+            minimum_dropout_cams = {name: np.min(dropout_cams_all_passes[name], axis=0) for name in dropout_cams_all_passes.keys()}
+
+            # Generate and save baseline CAM maps
+            baseline_cams = generate_cam_maps(
+                cam_methods=baseline_cam_methods,
+                image_tensor=image.unsqueeze(0),
+                class_idx=majority_label
+            )
+            save_cam_images_color(baseline_cams, dataset_index, 0, "baseline", output_folder)
+
+            cam_correlations_pearson = {name: compare_cams(averaged_dropout_cams[name], baseline_cams[name], correlation_type="pearson") for name in averaged_dropout_cams.keys()}
+            cam_correlations_spearman = {name: compare_cams(averaged_dropout_cams[name], baseline_cams[name], correlation_type="spearman") for name in averaged_dropout_cams.keys()}
+
+            # Save results with average CAM values
+            rows_avg.append({
+                "Image_Index": dataset_index,
+                "Original_Image_Path": original_image_path,
+                "True_Label": true_label,
+                "Pred_Label": majority_label,
+                "Entropy": ent,
+                "Selected": selected,
+                "Avg_GradCAM_Intensity": average_cam(averaged_dropout_cams)["GradCAM"],
+                "Avg_GradCAM++_Intensity": average_cam(averaged_dropout_cams)["GradCAM++"],
+                "Avg_ScoreCAM_Intensity": average_cam(averaged_dropout_cams)["ScoreCAM"],
+                "Pearson_GradCAM_Correlation": cam_correlations_pearson["GradCAM"],
+                "Pearson_GradCAM++_Correlation": cam_correlations_pearson["GradCAM++"],
+                "Pearson_ScoreCAM_Correlation": cam_correlations_pearson["ScoreCAM"],
+                "Spearman_GradCAM_Correlation": cam_correlations_spearman["GradCAM"],
+                "Spearman_GradCAM++_Correlation": cam_correlations_spearman["GradCAM++"],
+                "Spearman_ScoreCAM_Correlation": cam_correlations_spearman["ScoreCAM"],
+                "Image_Path": f"{output_folder}/image_{dataset_index}"  # Add path to saved images
+            })
+
+            # Save results with minimum CAM values
+            rows_min.append({
+                "Image_Index": dataset_index,
+                "Original_Image_Path": original_image_path,
+                "True_Label": true_label,
+                "Pred_Label": majority_label,
+                "Entropy": ent,
+                "Selected": selected,
+                "Min_GradCAM_Intensity": np.min(minimum_dropout_cams["GradCAM"]),
+                "Min_GradCAM++_Intensity": np.min(minimum_dropout_cams["GradCAM++"]),
+                "Min_ScoreCAM_Intensity": np.min(minimum_dropout_cams["ScoreCAM"]),
+                "Pearson_GradCAM_Correlation": cam_correlations_pearson["GradCAM"],
+                "Pearson_GradCAM++_Correlation": cam_correlations_pearson["GradCAM++"],
+                "Pearson_ScoreCAM_Correlation": cam_correlations_pearson["ScoreCAM"],
+                "Spearman_GradCAM_Correlation": cam_correlations_spearman["GradCAM"],
+                "Spearman_GradCAM++_Correlation": cam_correlations_spearman["GradCAM++"],
+                "Spearman_ScoreCAM_Correlation": cam_correlations_spearman["ScoreCAM"],
+                "Image_Path": f"{output_folder}/image_{dataset_index}"  # Add path to saved images
+            })
+
+            if selected:
+                y_true_all.append(true_label)
+                y_pred_all.append(majority_label)
+
+    # Save CSV files
+    df_avg = pd.DataFrame(rows_avg)
+    df_avg.to_csv(csv_path_avg, index=False)
+    
+    df_min = pd.DataFrame(rows_min)
+    df_min.to_csv(csv_path_min, index=False)
+
+    print(f"📁 Saved average results to {csv_path_avg}")
+    print(f"📁 Saved minimum results to {csv_path_min}")
+
+    acc = accuracy_score(y_true_all, y_pred_all)
+    prec = precision_score(y_true_all, y_pred_all)
+    rec = recall_score(y_true_all, y_pred_all)
+    f1 = f1_score(y_true_all, y_pred_all)
+    spec = binary_specificity(y_true_all, y_pred_all)
+    cm = confusion_matrix(y_true_all, y_pred_all)
+
+    return {
+        "Confusion Matrix": cm,
+            "Accuracy": acc,
+            "Precision": prec,
+            "Recall": rec,
+            "Specificity": spec,
+            "F1 Score": f1,
+            "Samples Considered": len(y_true_all),
+            "all_entropies": np.array(all_entropies),
+            "all_true": np.array(all_true),
+            "all_pred": np.array(all_pred),
+    }
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+def risk_coverage_curve(entropy, y_true, y_pred, save_path=None, title="Risk–Coverage (Entropy Rejection)"):
+
+    # sort samples from lowest entropy (highest confidence) to highest entropy
+    idx = np.argsort(entropy)
+    y_true_sorted = y_true[idx]
+    y_pred_sorted = y_pred[idx]
+
+    risks = []
+    coverages = []
+
+    N = len(y_true)
+
+    for k in range(1, N+1):
+        # keep top k confident samples
+        y_t = y_true_sorted[:k]
+        y_p = y_pred_sorted[:k]
+
+        # risk = 1 - accuracy on retained samples
+        acc = np.mean(y_t == y_p)
+        risk = 1.0 - acc
+
+        coverage = k / N
+
+        risks.append(risk)
+        coverages.append(coverage)
+
+    risks = np.array(risks)
+    coverages = np.array(coverages)
+
+    # AURC
+    aurc = np.trapz(risks, coverages)
+
+    # ---- plot ----
+    plt.figure(figsize=(7,6))
+    plt.plot(coverages, risks, label="Model")
+    plt.xlabel("Coverage (fraction of accepted samples)")
+    plt.ylabel("Risk (1 − accuracy)")
+    plt.title(title)
+    plt.grid(True)
+    plt.legend()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return aurc
+
+def main():
+    from torch.utils.data import DataLoader
+    from torchvision import datasets, transforms
+
+    # Define transforms and load test dataset
+    transform = transforms.Compose([
+        transforms.Resize(230),
+        transforms.CenterCrop(224),
+        transforms.ToTensor() 
+    ])
+    test_dataset = datasets.ImageFolder('/kaggle/input/newpatv1/test', transform=transform)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+    # Initialize model with dropout
+    model = CustomCNNWithDropout(num_classes=2, dropout_rate=0.01)  # Adjust num_classes and dropout rate as needed
+    model.load_state_dict(torch.load('model_fold_5.pth', map_location='cpu', weights_only=True))
+
+
+    # Initialize baseline model (without dropout for CAM comparison)
+    baseline_model = CustomCNNWithDropout(num_classes=2, dropout_rate=0)  # Disable dropout for baseline
+    baseline_model.load_state_dict(torch.load('model_fold_5.pth', map_location='cpu', weights_only=True))
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Evaluate with uncertainty and CAMs
+    metrics = evaluate_with_uncertainty_and_cam(
+        model=model,
+        baseline_model=baseline_model,
+        dataloader=test_loader,
+        dataset=test_dataset,
+        threshold=0.5,
+        T=20,
+        device=device,
+        csv_path_avg="mc_dropout_results_with_cam_avg.csv",  # Save results with average CAM values
+        csv_path_min="mc_dropout_results_with_cam_min.csv",   # Save results with minimum CAM values
+        output_folder="cam_images"
+    )
+
+    aurc = risk_coverage_curve(
+    entropy=metrics["all_entropies"],
+    y_true=metrics["all_true"],
+    y_pred=metrics["all_pred"],
+    save_path="risk_coverage_entropy.png",
+    title="Risk–Coverage Curve (Entropy Rejection)")
+
+    print(f"\nAURC (entropy-based rejection): {aurc:.4f}")
+    print("\n📊 Evaluation Metrics (Entropy <= 0.5):")
+    for k, v in metrics.items():
+        print(f"{k}: {v}")
+    # ===================== ADD THIS INSIDE main() =====================
+
+    print("\n📊 Calibration — Baseline Model")
+    baseline_calib = run_calibration(
+        baseline_model, test_loader, device,
+        name="baseline", mc_dropout=False
+    )
+    print(baseline_calib)
+    
+    print("\n📊 Calibration — TrustNet (MC Dropout)")
+    trustnet_calib = run_calibration(
+        model, test_loader, device,
+        name="trustnet", mc_dropout=True
+    )
+    print(trustnet_calib)
