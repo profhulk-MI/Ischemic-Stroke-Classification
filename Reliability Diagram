@@ -1,0 +1,29 @@
+import torch.nn.functional as F
+from tqdm import tqdm
+import os
+path='dataset/test/data'
+y_pred,y_true=[],[]
+model.eval()
+
+y_true = []
+y_prob = []
+y_pred = []
+logits_all = []
+
+with torch.no_grad():
+    for i in tqdm(os.listdir(path)):
+        img=cv2.imread(os.path.join(path,i))
+        img=cv2.resize(img,(230,230))
+        x = torch.from_numpy(img).permute(2, 0, 1).float()
+        # normalize to 0–1 if needed
+        x = x / 255.0
+        y_true.append(0 if 'NS' in i else 1)
+        x = x.unsqueeze(0)
+
+        logits = model(x)                # shape [1,2]
+        prob = F.softmax(logits, dim=1)  # -> probabilities
+        pred = torch.argmax(prob, dim=1)
+
+        y_prob.append(prob[0,1].item())  # class-1 probability
+        y_pred.append(pred.item())
+        logits_all.append(logits.cpu().numpy())
