@@ -1,0 +1,21 @@
+dropout_values = [0.01, 0.05, 0.1, 0.2, 0.3, 0.5]
+plt.figure(figsize=(8, 7))
+for p in dropout_values:
+
+    model = CustomCNNWithDropout(num_classes=2, dropout_rate=p)
+    model.load_state_dict(torch.load("models/model_fold_5.pth", map_location="cpu", weights_only=True))
+
+    y_true, logits_all = evaluate_dataset(model, T=20)
+
+    costs, accs = cost_accuracy_curve(y_true, logits_all, T=20)
+
+    plt.plot(costs, accs, marker='o', label=f"dropout p={p}")
+
+plt.xlabel("Cost (Number of MC Forward Passes)")
+plt.ylabel("Accuracy")
+plt.title("Cost–Accuracy Trade-off Across Dropout Rates new")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.savefig("cost_accuracy_tradeoff_all_dropout.png", dpi=300)
+plt.show()
