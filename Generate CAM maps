@@ -1,0 +1,75 @@
+def generate_cam_maps(cam_methods, image_tensor, class_idx):
+    """
+    Generate GradCAM, GradCAM++, and ScoreCAM maps for a given image and target class.
+    """
+    cam_maps = {}
+    for name, cam_method in cam_methods.items():
+        # Generate CAM map for the target class
+        grayscale_cam = cam_method(input_tensor=image_tensor, targets=[ClassifierOutputTarget(class_idx)])
+        cam_maps[name] = grayscale_cam[0]  # Extract first image from batch (since batch size = 1)
+    return cam_maps
+
+
+
+def compare_cams(cam_a, cam_b, correlation_type="pearson"):
+    """
+    Compare two CAM maps using Pearson or Spearman correlation coefficient.
+    
+    Args:
+        cam_a: First CAM map as a flattened array.
+        cam_b: Second CAM map as a flattened array.
+        correlation_type: Type of correlation ("pearson" or "spearman").
+        
+    Returns:
+        Correlation coefficient.
+    """
+    if correlation_type == "pearson":
+        return pearsonr(cam_a.flatten(), cam_b.flatten())[0]
+    elif correlation_type == "spearman":
+        return spearmanr(cam_a.flatten(), cam_b.flatten())[0]
+    else:
+        raise ValueError("Invalid correlation_type. Use 'pearson' or 'spearman'.")
+
+def average_cam(cam_maps):
+    """
+    Compute the average intensity of a CAM map.
+    """
+    return {name: np.mean(cam) for name, cam in cam_maps.items()}
+# ------------------- Entropy Utils -------------------
+
+def compute_entropy(probabilities, eps=1e-8):
+    mean_probs = np.mean(probabilities, axis=0)
+    return -np.sum(mean_probs * np.log(mean_probs + eps))
+
+# ------------------- Metrics -------------------
+
+def binary_specificity(y_true, y_pred):
+    cm = confusion_matrix(y_true, y_pred)
+    tn = cm[0, 0]
+    fp = cm[0, 1]
+    return tn / (tn + fp + 1e-6)
+
+# ------------------- MC Dropout Prediction -------------------
+
+def mc_dropout_predictions(model, image, T=20):
+    model.eval()  # Keep BatchNorm in eval
+
+    def enable_dropout(m):
+        if isinstance(m, nn.Dropout):
+            m.train()
+        elif isinstance(m, nn.BatchNorm2d):
+            m.eval()
+    model.apply(enable_dropout)
+
+    preds = []
+    softmax_probs = []
+
+    with torch.no_grad():
+        for _ in range(T):
+            output = model(image.unsqueeze(0))  # (1, num_classes)
+            probs = F.softmax(output, dim=1).squeeze(0).cpu().numpy()
+            pred = np.argmax(probs)
+            preds.append(pred)
+            softmax_probs.append(probs)
+
+    return np.array(preds), np.stack(softmax_probs)
