@@ -1,8 +1,10 @@
-Diagnosing ischemic stroke from Computed Tomography (CT) images is a highly challenging and detailed process that requires precise and careful analysis by a
+Diagnosing ischemic stroke from Computed Tomography  images is a highly challenging and detailed process that requires precise and careful analysis by a
 medical professional. Deep Learning techniques offer an effective solution to this
 issue because of their remarkable performance. Nevertheless, most of those methods
-still lack the Uncertainty Quantification (UQ) and eXplainable Artificial Intelligence
-(XAI) features, which are essential for clinical practice and acceptance. We present
+still lack the Uncertainty Quantification and eXplainable Artificial Intelligence features, which are essential for clinical practice and acceptance. 
+
+ ![Model Architecture](images/model.png)
+We present
 TrustNet, a small but powerful Convolutional Neural Network (0.66 MB) that uses
 Monte Carlo dropout and quantitative Grad-CAM. This technique helps visualize the
 issues related to two independent factors: uncertainty in the model's classification
