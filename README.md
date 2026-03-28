@@ -17,10 +17,10 @@ This repository presents a comprehensive suite of **deep learning and machine le
   Custom CNN encoders, multi-scale feature extraction (3×3, 5×5, 7×7), attention mechanisms, and transformer-based models [RVFL](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/Dual-Attention-with-RVFL), [Patch](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/Patch-level-identification).
 
 - 📊 **Uncertainty Quantification (UQ)**  
-  Integration of MC Dropout, Deep Ensembles, and probabilistic modeling to improve prediction reliability [Link](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/TrustNet)   
+  Integration of MC Dropout, Deep Ensembles, and probabilistic modeling to improve prediction reliability [TrustNet](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/TrustNet)   
 
 - 🔎 **Explainable AI (XAI)**  
-  Implementation of Grad-CAM, Score-CAM, and attention visualization for clinical interpretability   [Link]([URL](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/TrustNet))
+  Implementation of Grad-CAM, Score-CAM, and attention visualization for clinical interpretability   [TrustNet]([URL](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/TrustNet))
 
 - 🏥 **Clinical Focus**  
   Designed for real-world applicability with emphasis on reducing false predictions and improving diagnostic confidence  
