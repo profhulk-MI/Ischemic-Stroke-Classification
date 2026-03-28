@@ -14,7 +14,7 @@ This repository presents a comprehensive suite of **deep learning and machine le
   From preprocessing of CT/NCCT scans to model training, evaluation, and deployment-ready structuring  
 
 - 🧠 **Advanced Deep Learning Architectures**  
-  Custom CNN encoders, multi-scale feature extraction (3×3, 5×5, 7×7), attention mechanisms, and transformer-based models [RVFL](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/Dual-Attention-with-RVFL), [Patch](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/Patch-level-identification).
+  Custom CNN encoders, multi-scale feature extraction (3×3, 5×5, 7×7), attention mechanisms, and transformer-based models [RVFL](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/Dual-Attention-with-RVFL), [Patch](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/Patch-level-identification), [MWLD](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/Modified-Weber-Local-Descriptor)).
 
 - 📊 **Uncertainty Quantification (UQ)**  
   Integration of MC Dropout, Deep Ensembles, and probabilistic modeling to improve prediction reliability [TrustNet](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/TrustNet)   
