@@ -3,8 +3,7 @@
     <td width="60%">
 
 # Ischemic-Stroke-Classification
-
-- Ischemic brain stroke remains a global health concern and a leading cause of mortality and long-term
+-Ischemic brain stroke remains a global health concern and a leading cause of mortality and long-term
 disability worldwide.
 Despite significant advancements in acute stroke management, the incidence and burden of this devastating cerebrovascular
 event continue to increase, particularly in developing nations. This study proposes a novel machine learning approach for classifying
@@ -25,7 +24,6 @@ decision support.
  </td>
     <td width="40%">
       <img src="fig 3.jpg" width="100%"/>
-    <td width="40%">
       <img src="fig 6.jpg" width="100%"/>
     </td>
   </tr>
