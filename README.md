@@ -4,7 +4,7 @@
 
 ### TrustNet – Reliable AI for Stroke Detection
 
-** Diagnosing ischemic stroke from Computed Tomography  images is a highly challenging and detailed process that requires precise and careful analysis by a
+- Diagnosing ischemic stroke from Computed Tomography  images is a highly challenging and detailed process that requires precise and careful analysis by a
 medical professional. Deep Learning techniques offer an effective solution to this
 issue because of their remarkable performance. Nevertheless, most of those methods
 still lack the Uncertainty Quantification and eXplainable Artificial Intelligence features, which are essential for clinical practice and acceptance. 
