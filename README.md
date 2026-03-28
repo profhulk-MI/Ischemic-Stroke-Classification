@@ -21,8 +21,7 @@ limiting the number incorrect predictions, which is crucial for stroke diagnosis
 this performance, our approach can also provide an explanation for the reasoning and estimate confidence, which is essential for model deployment. This method is an indispensable tool for eliminating diagnostic bias and thus controlling the safety of AI
 in the clinical workflow.
 
-
-    </td>
+  </td>
     <td width="40%">
       <img src="overview_new.jpg" width="100%"/>
     </td>
