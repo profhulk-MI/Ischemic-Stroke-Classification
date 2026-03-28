@@ -20,7 +20,7 @@ This repository presents a comprehensive suite of **deep learning and machine le
   Integration of MC Dropout, Deep Ensembles, and probabilistic modeling to improve prediction reliability [TrustNet](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/TrustNet)   
 
 - 🔎 **Explainable AI (XAI)**  
-  Implementation of Grad-CAM, Score-CAM, and attention visualization for clinical interpretability   [TrustNet]([URL](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/TrustNet))
+  Implementation of Grad-CAM, Score-CAM, and attention visualization for clinical interpretability   [TrustNet](https://github.com/profhulk-MI/Ischemic-Stroke-Classification/tree/TrustNet)
 
 - 🏥 **Clinical Focus**  
   Designed for real-world applicability with emphasis on reducing false predictions and improving diagnostic confidence  
