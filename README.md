@@ -2,6 +2,8 @@
   <tr>
     <td width="60%">
 
+
+## Attention-Based Stroke Classification with Patch-Level Embedding 
 - Stroke is currently a major contributor to disability and mortality across the globe, with ischemic stroke being the
 most predominant subtype. Accurate and timely diagnosis is critical for effective treatment. This study introduces
 a novel deep learning framework that leverages patch-level significance analysis for precise identification of
