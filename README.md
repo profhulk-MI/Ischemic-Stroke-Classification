@@ -3,7 +3,7 @@ medical professional. Deep Learning techniques offer an effective solution to th
 issue because of their remarkable performance. Nevertheless, most of those methods
 still lack the Uncertainty Quantification and eXplainable Artificial Intelligence features, which are essential for clinical practice and acceptance. 
 
- ![Model Architecture](images/model.png)
+ ![Model Architecture](overview_new.jpg)
 We present
 TrustNet, a small but powerful Convolutional Neural Network (0.66 MB) that uses
 Monte Carlo dropout and quantitative Grad-CAM. This technique helps visualize the
