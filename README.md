@@ -25,9 +25,6 @@ decision support.
  </td>
     <td width="40%">
       <img src="fig 3.jpg" width="100%"/>
-    </td>
-
-   </td>
     <td width="40%">
       <img src="fig 6.jpg" width="100%"/>
     </td>
