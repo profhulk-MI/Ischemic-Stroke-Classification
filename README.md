@@ -45,7 +45,7 @@ This repository presents a comprehensive suite of **deep learning and machine le
       <img src="fig 1.png" width="100%"/>
       <img src="fig 4.jpg" width="100%"/>
       <img src="fig 8.jpeg" width="100%"/>
-      <img src="fig 9.png" width="100%"/>
+      <img src="fig 3.png" width="100%"/>
     </td>
   </tr>
 </table>
