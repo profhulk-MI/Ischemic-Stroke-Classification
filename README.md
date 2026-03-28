@@ -1,3 +1,7 @@
+<table>
+  <tr>
+    <td width="60%">
+
 # Ischemic-Stroke-Classification using Dual attention with Adapative Random vector Functional Link
 
 - This study introduces a dual-stream deep learning framework for ischemic stroke classification using CT images, achieving impressive accuracy rates of 98.83% on a single-center dataset and 92.42% on a multi-center dataset.
