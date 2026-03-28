@@ -23,8 +23,8 @@ medical diagnosis.
 
  </td>
     <td width="40%">
-      <img src="fig 3.jpg" width="100%"/>
-      <img src="fig 6.jpg" width="100%"/>
+      <img src="fig 3.png" width="100%"/>
+      <img src="fig 6.png" width="100%"/>
     </td>
   </tr>
 </table>
